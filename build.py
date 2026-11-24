@@ -24,8 +24,8 @@ esc = lambda s: html.escape(str(s or ""), quote=True)
 
 CATEGORIES = [
     ("remote-customer-service-jobs", "Remote Customer Service Jobs", "Customer Service",
-     r"customer|support|service|success|help ?desk|call cent|chat agent|client care|experience specialist",
-     "Remote customer service jobs let you help customers by chat, email or phone from home. Common titles include support specialist, customer success manager and help desk agent."),
+     r"customer (service|support|care|experience (specialist|associate|agent|representative))|support (specialist|agent|representative|associate|engineer|analyst|lead)|technical support|help ?desk|service desk|call cent|chat (agent|support)|client (care|support|services rep)|customer success|contact cent",
+     "Remote customer service jobs let you help customers by chat, email or phone from home. Common titles include support specialist, technical support engineer, customer success manager and help desk agent."),
     ("remote-data-entry-jobs", "Remote Data Entry & Admin Jobs", "Data Entry & Admin",
      r"data entry|admin|assistant|clerk|coordinator|operations associate|typist|transcri|annotat",
      "Real remote data entry jobs are less common than ads suggest, so this page also shows close matches such as admin assistant, coordinator and operations roles. Real employers never ask you to pay to start."),
@@ -92,8 +92,9 @@ def prepare(jobs):
         seen.add(key)
         short = hashlib.md5(j["id"].encode()).hexdigest()[:6]
         j["slug"] = f"{slugify(j['title'] + ' ' + j['company'])}-{short}"
-        text = f"{j['title']} {j.get('department', '')}"
-        j["cats"] = [slug for slug, rx in CAT_RE if rx.search(text)]
+        # Match on the job title first (precise); use the department only if the title matched nothing.
+        j["cats"] = [slug for slug, rx in CAT_RE if rx.search(j["title"])] or \
+                    [slug for slug, rx in CAT_RE if rx.search(j.get("department", ""))][:1]
         out.append(j)
     out.sort(key=lambda j: (not j.get("featured"), j["date_posted"]), reverse=False)
     out.sort(key=lambda j: j["date_posted"], reverse=True)
