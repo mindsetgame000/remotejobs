@@ -42,14 +42,23 @@ def country_name(s):
     return COUNTRIES.get(s) or ALIASES.get(s)
 
 
+_CNAMES = sorted(set(list(COUNTRIES.keys()) + list(ALIASES.keys())), key=len, reverse=True)
+
+
 def countries_in(text):
-    """Country names that appear in a location string, e.g. 'Remote, Canada; Remote, United States'."""
+    """Country names found anywhere in a location string,
+    e.g. 'Remote Poland', 'Remote, Canada; Remote, United States', 'Remote (U.S.)'."""
+    t = " " + re.sub(r"[;,|/()·\-–]", " ", (text or "").lower()) + " "
+    t = re.sub(r"\s+", " ", t)
     found = []
-    for part in re.split(r"[;|/]| or |\band\b", text or ""):
-        for piece in re.split(r"[,\-–()]", part):
-            c = country_name(piece)
+    for name in _CNAMES:
+        if len(name) <= 3 and name not in ("usa", "uk", "uae", "us"):
+            continue
+        if f" {name} " in t:
+            c = COUNTRIES.get(name) or ALIASES.get(name)
             if c and c not in found:
                 found.append(c)
+            t = t.replace(f" {name} ", " ")
     return found
 
 
@@ -154,7 +163,7 @@ def iso_date(v):
 
 
 # ------------------------------------------------------------------ sources
-def from_greenhouse(board):
+def from_greenhouse(board, display=None):
     data = get(f"https://boards-api.greenhouse.io/v1/boards/{board}/jobs?content=true")
     out = []
     for j in data.get("jobs", []):
@@ -163,7 +172,7 @@ def from_greenhouse(board):
             continue
         out.append({
             "id": f"gh-{j.get('id')}", "title": (j.get("title") or "").strip(),
-            "company": j.get("company_name") or board.replace("-", " ").title(),
+            "company": display or j.get("company_name") or board.replace("-", " ").title(),
             "company_url": "", "location_text": loc, "remote": True,
             "applicant_countries": countries_in(loc),
             "employment_type": type_from_text(j.get("title")),
@@ -176,7 +185,7 @@ def from_greenhouse(board):
     return out
 
 
-def from_lever(company):
+def from_lever(company, display=None):
     data = get(f"https://api.lever.co/v0/postings/{company}?mode=json")
     commit = {"full-time": "FULL_TIME", "full time": "FULL_TIME", "part-time": "PART_TIME", "part time": "PART_TIME",
               "contract": "CONTRACTOR", "contractor": "CONTRACTOR", "intern": "INTERN", "internship": "INTERN",
@@ -201,7 +210,7 @@ def from_lever(company):
         name = j.get("hostedUrl", "").split("/")[3] if j.get("hostedUrl") else company
         out.append({
             "id": f"lv-{j.get('id')}", "title": (j.get("text") or "").strip(),
-            "company": name.replace("-", " ").title(), "company_url": "",
+            "company": display or name.replace("-", " ").title(), "company_url": "",
             "location_text": all_locs or "Remote", "remote": True, "applicant_countries": countries,
             "employment_type": commit.get((cats.get("commitment") or "").lower(), type_from_text(j.get("text"))),
             "department": cats.get("department") or cats.get("team") or "",
@@ -215,7 +224,13 @@ def from_lever(company):
     return out
 
 
-def from_ashby(org):
+def split_name(entry):
+    """'openai|OpenAI' -> ('openai', 'OpenAI'); 'stripe' -> ('stripe', None)."""
+    slug, _, name = entry.partition("|")
+    return slug.strip(), (name.strip() or None)
+
+
+def from_ashby(org, display=None):
     data = get(f"https://api.ashbyhq.com/posting-api/job-board/{org}?includeCompensation=true")
     types = {"FullTime": "FULL_TIME", "PartTime": "PART_TIME", "Contract": "CONTRACTOR",
              "Intern": "INTERN", "Temporary": "TEMPORARY"}
@@ -234,7 +249,7 @@ def from_ashby(org):
             if c: countries = [c]
         out.append({
             "id": f"ab-{j.get('id')}", "title": (j.get("title") or "").strip(),
-            "company": org.replace("-", " ").title(), "company_url": "",
+            "company": display or org.replace("-", " ").title(), "company_url": "",
             "location_text": loc_text or "Remote", "remote": True, "applicant_countries": countries,
             "employment_type": types.get(j.get("employmentType", ""), ""),
             "department": j.get("department") or j.get("team") or "",
@@ -250,26 +265,70 @@ def truthy(v):
     return str(v).strip().lower() in ("1", "yes", "y", "true", "remote")
 
 
+FIELD_ALIASES = {
+    "title": ["title", "job_title", "jobtitle", "position", "name"],
+    "company": ["company", "company_name", "employer", "hiringorganization", "organization"],
+    "company_url": ["company_url", "company_website", "website"],
+    "apply_url": ["apply_url", "applyurl", "apply_link", "application_url", "url", "link", "job_url"],
+    "employment_type": ["employment_type", "employmenttype", "job_type", "type"],
+    "applicant_countries": ["applicant_countries", "countries", "country_list", "applicantlocationrequirements"],
+    "description": ["description", "job_description", "details", "content"],
+    "date_posted": ["date_posted", "dateposted", "posted", "date"],
+    "valid_through": ["valid_through", "validthrough", "deadline", "expires"],
+    "category": ["category", "department"],
+    "location": ["location", "location_text", "joblocation"],
+}
+
+
+def _pick(r, key):
+    low = {k.lower().replace(" ", "_"): v for k, v in r.items()}
+    for a in FIELD_ALIASES.get(key, [key]):
+        if a in low and low[a] not in (None, "", []):
+            return low[a]
+    return r.get(key, "")
+
+
+def _text(v):
+    """Accept plain values or schema.org style objects ({"name": ...})."""
+    if isinstance(v, dict):
+        return v.get("name") or v.get("value") or ""
+    if isinstance(v, list):
+        return ", ".join(_text(x) for x in v if _text(x))
+    return "" if v is None else str(v)
+
+
 def normalize_manual(r, idx, source):
-    countries = r.get("applicant_countries") or r.get("countries") or ""
-    if isinstance(countries, str):
-        countries = [country_name(c) or c.strip() for c in countries.split(",") if c.strip()]
-    title = (r.get("title") or "").strip()
+    countries = _pick(r, "applicant_countries")
+    if isinstance(countries, list):
+        countries = [_text(c) for c in countries]
+    elif isinstance(countries, str):
+        countries = [c.strip() for c in countries.split(",") if c.strip()]
+    countries = [country_name(c) or c for c in countries if c]
+    if not countries:
+        countries = countries_in(_text(_pick(r, "location")))
+    sal = r.get("baseSalary") or {}
+    salv = sal.get("value", {}) if isinstance(sal, dict) else {}
+    title = _text(_pick(r, "title")).strip()
+    etype = _pick(r, "employment_type")
+    etype = (etype[0] if isinstance(etype, list) and etype else etype) or ""
     return {
         "id": str(r.get("id") or f"{source}-{idx}-{re.sub(r'[^a-z0-9]+', '-', title.lower())[:40]}"),
-        "title": title, "company": (r.get("company") or "").strip(),
-        "company_url": r.get("company_url") or "",
-        "location_text": r.get("location") or ("Remote" if truthy(r.get("remote", "yes")) else ""),
-        "remote": truthy(r.get("remote", "yes")), "applicant_countries": countries,
+        "title": title, "company": _text(_pick(r, "company")).strip(),
+        "company_url": _text(_pick(r, "company_url")) or (r.get("hiringOrganization", {}) or {}).get("sameAs", "") if isinstance(r.get("hiringOrganization"), dict) else _text(_pick(r, "company_url")),
+        "location_text": _text(_pick(r, "location")) or ("Remote" if truthy(r.get("remote", "yes")) else ""),
+        "remote": truthy(r.get("remote", "yes")) or str(r.get("jobLocationType", "")).upper() == "TELECOMMUTE",
+        "applicant_countries": countries,
         "city": r.get("city") or "", "country": r.get("country") or "",
-        "employment_type": (r.get("employment_type") or "").strip().upper().replace("-", "_").replace(" ", "_"),
-        "department": r.get("category") or "",
-        "description": clean_html(r.get("description") or ""),
-        "apply_url": (r.get("apply_url") or "").strip(),
-        "date_posted": iso_date(r.get("date_posted")) or time.strftime("%Y-%m-%d"),
-        "valid_through": iso_date(r.get("valid_through")),
-        "salary_min": r.get("salary_min") or "", "salary_max": r.get("salary_max") or "",
-        "salary_currency": r.get("salary_currency") or "", "salary_unit": (r.get("salary_unit") or "").upper(),
+        "employment_type": str(etype).strip().upper().replace("-", "_").replace(" ", "_"),
+        "department": _text(_pick(r, "category")),
+        "description": clean_html(_text(_pick(r, "description"))),
+        "apply_url": _text(_pick(r, "apply_url")).strip(),
+        "date_posted": iso_date(_text(_pick(r, "date_posted"))) or time.strftime("%Y-%m-%d"),
+        "valid_through": iso_date(_text(_pick(r, "valid_through"))),
+        "salary_min": r.get("salary_min") or salv.get("minValue") or "",
+        "salary_max": r.get("salary_max") or salv.get("maxValue") or "",
+        "salary_currency": r.get("salary_currency") or (sal.get("currency") if isinstance(sal, dict) else "") or "",
+        "salary_unit": (r.get("salary_unit") or salv.get("unitText") or "").upper(),
         "source": source, "featured": True,
     }
 
@@ -285,7 +344,10 @@ def from_json(path):
     if not os.path.exists(path):
         return []
     rows = json.load(open(path, encoding="utf-8"))
-    return [normalize_manual(r, i, "manual") for i, r in enumerate(rows) if r.get("title") and r.get("apply_url")]
+    if isinstance(rows, dict):
+        rows = rows.get("jobs") or rows.get("data") or [rows]
+    out = [normalize_manual(r, i, "manual") for i, r in enumerate(rows) if isinstance(r, dict)]
+    return [j for j in out if j["title"] and j["apply_url"]]
 
 
 def collect(companies_file="companies.json", jobs_file="jobs.json", sheet_url=""):
@@ -296,9 +358,10 @@ def collect(companies_file="companies.json", jobs_file="jobs.json", sheet_url=""
     jobs, report = [], []
 
     def run(t):
-        fn, name = t
+        fn, entry = t
+        name, display = split_name(entry)
         try:
-            res = fn(name)
+            res = fn(name, display)
             return name, fn.__name__[5:], res, None
         except Exception as e:  # noqa
             return name, fn.__name__[5:], [], e

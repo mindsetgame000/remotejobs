@@ -1,5 +1,5 @@
 {
-  "_help": "Company job-board names to import every day. Add or remove names freely. A wrong name is skipped and shown in the build log.",
+  "_help": "Company job-board names to import every day. Add or remove names freely. A wrong name is skipped and shown in the build log. To fix how a name is shown, write it as slug|Name, e.g. openai|OpenAI.",
   "greenhouse": [
     "gitlab", "airbnb", "stripe", "dropbox", "reddit", "discord", "figma", "coinbase",
     "robinhood", "duolingo", "cloudflare", "datadog", "elastic", "twilio", "squarespace",
@@ -10,10 +10,10 @@
   ],
   "lever": [
     "spotify", "palantir", "plaid", "netlify", "kraken", "binance", "veeva", "outreach",
-    "attentive", "whoop", "aircall", "toptal", "wealthsimple", "zoox"
+    "attentive", "whoop|WHOOP", "aircall", "toptal", "wealthsimple|Wealthsimple", "zoox|Zoox"
   ],
   "ashby": [
-    "ramp", "notion", "linear", "openai", "deel", "vanta", "retool", "supabase",
-    "posthog", "zapier", "replit", "cursor", "clickup", "1password"
+    "ramp", "notion", "linear", "openai|OpenAI", "deel", "vanta", "retool", "supabase",
+    "posthog|PostHog", "zapier", "replit", "cursor", "clickup|ClickUp", "1password|1Password"
   ]
 }

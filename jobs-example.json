@@ -1,0 +1,19 @@
+[
+  {
+    "title": "Remote Customer Support Agent",
+    "company": "Company Name",
+    "company_url": "https://company.com",
+    "category": "Customer Service",
+    "employment_type": "PART_TIME",
+    "remote": "yes",
+    "applicant_countries": "United States, Canada",
+    "salary_min": 17,
+    "salary_max": 20,
+    "salary_currency": "USD",
+    "salary_unit": "HOUR",
+    "description": "<p>Full job description.</p><ul><li>Requirement 1</li><li>Requirement 2</li></ul>",
+    "apply_url": "https://company.com/careers/123",
+    "date_posted": "2026-11-24",
+    "valid_through": "2026-12-31"
+  }
+]
