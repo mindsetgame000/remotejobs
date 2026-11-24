@@ -10,8 +10,17 @@ BRAND = "Remote Jobs Hub"
 EMAIL = "your-email@example.com"
 # Google Sheet: File > Share > Publish to web > CSV, paste the link here (or set SHEET_CSV_URL in Cloudflare).
 SHEET_CSV_URL = os.environ.get("SHEET_CSV_URL", "")
-GOOGLE_VERIFY = os.environ.get("GOOGLE_SITE_VERIFICATION", "")   # Search Console > HTML tag > content="..."
-BING_VERIFY = os.environ.get("BING_SITE_VERIFICATION", "")
+GOOGLE_VERIFY = os.environ.get("GOOGLE_SITE_VERIFICATION") or "2iHI4IUqKy1dDZekz7cEyuhFyL7PopYPezjXNwp25aM"
+BING_VERIFY = os.environ.get("BING_SITE_VERIFICATION") or "09D6000EB22970629E6F63072BA7FE9A"
+
+
+def _meta_code(v):
+    """Accepts just the code or the whole <meta ... content="CODE"> tag."""
+    m = re.search(r'content\s*=\s*["\']([^"\']+)', v or "")
+    return (m.group(1) if m else (v or "")).strip()
+
+
+GOOGLE_VERIFY, BING_VERIFY = _meta_code(GOOGLE_VERIFY), _meta_code(BING_VERIFY)
 MAX_JOBS = 12000          # Cloudflare Pages free plan allows 20,000 files per site
 VALID_DAYS = 45           # a job leaves the site this many days after it was posted
 PER_PAGE = 30
