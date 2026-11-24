@@ -57,7 +57,7 @@ POSTS = [
 <h2>Why true data entry jobs are rare</h2>
 <p>Much simple data entry is now automated, so companies more often hire for roles that include data work alongside other tasks. Good search terms include:</p>
 <ul>
-<li>Administrative assistant or <a href="/remote-virtual-assistant-jobs/">virtual assistant</a></li>
+<li>Administrative assistant or <a href="/remote-data-entry-jobs/">virtual assistant</a></li>
 <li>Operations coordinator or operations associate</li>
 <li>Data quality specialist or data annotator</li>
 <li>Customer support roles that include CRM updates</li>

@@ -2,7 +2,7 @@
 """Builds the whole Remote Jobs Hub site into ./site/ (Cloudflare Pages build command: python3 build.py)."""
 import datetime, hashlib, html, json, os, re, shutil, sys
 from importer import collect, plain
-from blog_posts import POSTS
+from blog import load_posts, autolink, related_posts
 
 # ======================== SETTINGS (edit these) ========================
 BASE = os.environ.get("SITE_URL", "https://us.remotejobs.loveslife.biz").rstrip("/")
@@ -61,6 +61,36 @@ CATEGORIES = [
      "Remote IT and security jobs: IT support, security engineers, cloud and infrastructure, and compliance roles."),
 ]
 CAT_RE = [(slug, re.compile(rx, re.I)) for slug, _, _, rx, _ in CATEGORIES]
+POSTS = load_posts("posts", CATEGORIES)
+
+# Phrases that become internal links automatically (first mention on each page).
+EXTRA_PHRASES = {
+    "remote-customer-service-jobs": ["customer support jobs", "remote support jobs", "help desk jobs", "chat support jobs"],
+    "remote-data-entry-jobs": ["remote data entry jobs", "data entry jobs", "admin assistant jobs", "virtual assistant jobs"],
+    "remote-software-development-jobs": ["remote developer jobs", "software engineer jobs", "programming jobs"],
+    "remote-data-analytics-jobs": ["data analyst jobs", "data science jobs"],
+    "remote-marketing-jobs": ["digital marketing jobs", "seo jobs", "social media jobs"],
+    "remote-sales-jobs": ["sales jobs", "account executive jobs"],
+    "remote-design-jobs": ["graphic design jobs", "ux design jobs", "design jobs"],
+    "remote-writing-jobs": ["content writing jobs", "writing jobs", "copywriting jobs"],
+    "remote-finance-accounting-jobs": ["accounting jobs", "bookkeeping jobs", "finance jobs"],
+    "remote-hr-recruiting-jobs": ["recruiter jobs", "recruiting jobs", "hr jobs"],
+    "remote-it-security-jobs": ["it support jobs", "cybersecurity jobs", "security jobs"],
+}
+
+
+def link_phrases():
+    out = []
+    for slug, name, short, _, _ in CATEGORIES:
+        n = name.lower()
+        out += [(n, f"/{slug}/"), (n.replace("remote ", "", 1), f"/{slug}/")]
+        out += [(x, f"/{slug}/") for x in EXTRA_PHRASES.get(slug, [])]
+    for p in POSTS:
+        if p.get("keyword"):
+            out.append((p["keyword"], f"/blog/{p['slug']}/"))
+        out.append((p["title"].lower(), f"/blog/{p['slug']}/"))
+    out += [("remote jobs hiring now", "/jobs/"), ("latest remote jobs", "/jobs/")]
+    return out
 TYPE_LABEL = {"FULL_TIME": "Full-time", "PART_TIME": "Part-time", "CONTRACTOR": "Contract",
               "TEMPORARY": "Temporary", "INTERN": "Internship", "PER_DIEM": "Per diem", "OTHER": "Other"}
 
@@ -229,6 +259,20 @@ def ago(d):
     return "Today" if days <= 0 else ("1 day ago" if days == 1 else (f"{days} days ago" if days < 30 else d))
 
 
+def guide_line(j):
+    g = next((p for p in POSTS if p.get("cat") and p["cat"] in j.get("cats", [])), None)
+    return f'<p class="muted">Guide: <a href="/blog/{g["slug"]}/">{esc(g["title"])}</a></p>' if g else ""
+
+
+def guides_for(slug):
+    gs = [p for p in POSTS if p.get("cat") == slug][:4]
+    if not gs:
+        return ""
+    return ('<section class="wrap"><h2>Guides</h2><div class="grid">' + "".join(
+        f'<a class="card post-card" href="/blog/{p["slug"]}/"><h3>{esc(p["title"])}</h3><p>{esc(p["desc"])}</p><span class="more">Read guide &rarr;</span></a>'
+        for p in gs) + "</div></section>")
+
+
 def card(j):
     tags = '<span class="tag gold">Featured</span>' if j.get("featured") else ""
     tags += f'<span class="tag green">{esc(location_label(j))}</span>'
@@ -287,7 +331,7 @@ def summary_html(name, jobs):
     return facts, faq
 
 
-def paged(base, jobs, title, desc, intro_html, crumb_name):
+def paged(base, jobs, title, desc, intro_html, crumb_name, extra_html=""):
     pages = max(1, -(-len(jobs) // PER_PAGE))
     thin = len(jobs) < 3  # nearly empty pages stay out of Google until they fill up
     facts, faq = summary_html(title, jobs)
@@ -303,7 +347,8 @@ def paged(base, jobs, title, desc, intro_html, crumb_name):
 {AD_LEADER}
 <section class="wrap jobs"><p class="muted">{len(jobs):,} open remote jobs &middot; updated {TODAY.strftime('%B %d, %Y')}</p>{job_list(chunk)}{pager(base, p, pages)}</section>
 {AD_BOX}
-{f'<section class="wrap">{facts}</section><section class="wrap faq"><h2>{esc(title)}: FAQ</h2>{faq_html}</section>' if p == 1 and facts else ''}"""
+{f'<section class="wrap">{facts}</section><section class="wrap faq"><h2>{esc(title)}: FAQ</h2>{faq_html}</section>' if p == 1 and facts else ''}
+{extra_html if p == 1 else ''}"""
         schemas = [crumbs([("Home", "/"), (crumb_name, base)])]
         if chunk:
             schemas.append({"@context": "https://schema.org", "@type": "ItemList", "name": title,
@@ -388,6 +433,7 @@ def main():
 <div class="cta-box"><h2>Interested?</h2><p>You will apply on {esc(j['company'])}'s own application page.</p>
 <a class="btn-accent" href="{apply_href}" rel="nofollow">Apply now</a></div>
 {f'<div class="pills">{cat_links}</div>' if cat_links else ''}
+{guide_line(j)}
 <p class="muted">Never pay to apply for a job. <a href="/blog/how-to-spot-remote-job-scams/">How to spot job scams</a>.</p>
 </article>
 {f'<section class="wrap"><h2>Similar Remote Jobs</h2>{job_list(similar)}</section>' if similar else ''}"""
@@ -428,7 +474,7 @@ def main():
         counts[slug] = len(cj)
         others = "".join(f'<a class="pill" href="/{c[0]}/">{c[2]}</a>' for c in CATEGORIES if c[0] != slug)
         urls += paged(f"/{slug}/", cj, name, f"{len(cj):,} {name.lower()} hiring now. Updated daily, apply on the employer's own site.",
-                      f'<p class="lead">{intro}</p><div class="pills">{others}</div>', name)
+                      f'<p class="lead">{intro}</p><div class="pills">{others}</div>', name, guides_for(slug))
 
     # ---- home
     pills = "".join(f'<a class="pill" href="/{c[0]}/">{c[2]} <span class="count">{counts[c[0]]:,}</span></a>' for c in CATEGORIES)
@@ -461,26 +507,36 @@ def main():
     LASTMOD["/"] = TODAY.isoformat()
 
     # ---- blog
-    cards = "".join(f'<a class="card post-card" href="/blog/{p["slug"]}/"><h2>{p["title"]}</h2><p>{p["desc"]}</p><span class="more">Read more &rarr;</span></a>' for p in POSTS)
+    phrases = link_phrases()
+    cards = "".join(f'<a class="card post-card" href="/blog/{p["slug"]}/"><h2>{esc(p["title"])}</h2><p>{esc(p["desc"])}</p><span class="more">Read more &rarr;</span></a>' for p in POSTS)
     write("/blog/", f'<section class="hero hero-small"><div class="wrap"><nav class="crumbs"><a href="/">Home</a> / Blog</nav><h1>Remote Work Blog</h1><p class="lead">Honest, practical guides to help you find and land a remote job.</p></div></section><section class="wrap"><div class="grid">{cards}</div></section>',
           f"Remote Work Blog – Job Search Guides | {BRAND}", "Practical guides for finding remote jobs: avoiding scams, writing a remote resume, and getting hired.",
           [crumbs([("Home", "/"), ("Blog", "/blog/")])])
     urls.append("/blog/")
+    cat_names = {c[0]: c[1] for c in CATEGORIES}
     for p in POSTS:
-        rel = "".join(f'<li><a href="/blog/{o["slug"]}/">{o["title"]}</a></li>' for o in POSTS if o is not p)
+        path = f"/blog/{p['slug']}/"
         bodytxt = p["body"].replace("{brand}", BRAND).replace(
             "comes from a public remote job board, and the Apply button takes you to the original listing",
             "comes from an employer's own career page, and the Apply button takes you to the employer's application page")
-        path = f"/blog/{p['slug']}/"
-        write(path, f"""<article class="wrap article"><nav class="crumbs"><a href="/">Home</a> / <a href="/blog/">Blog</a> / {p['title']}</nav>
-<h1>{p['title']}</h1><p class="muted">Updated {TODAY.strftime('%B %d, %Y')} &middot; {BRAND}</p>{bodytxt}{AD_BOX}
-<div class="cta-box"><h2>Browse remote jobs hiring now</h2><p>{len(jobs):,} openings, updated daily.</p><a class="btn-accent" href="/jobs/">View Jobs</a></div>
-<h2>Related Guides</h2><ul>{rel}</ul></article>""", f"{p['title']} | {BRAND}", p["desc"],
+        bodytxt = autolink(bodytxt, phrases, self_url=path)
+        rel = "".join(f'<li><a href="/blog/{o["slug"]}/">{esc(o["title"])}</a></li>' for o in related_posts(p, POSTS))
+        cat = p.get("cat")
+        cj = [j for j in jobs if cat and cat in j["cats"]][:5]
+        latest = (f'<h2>Latest {esc(cat_names[cat])}</h2>{job_list(cj)}<p><a href="/{cat}/">See all {esc(cat_names[cat].lower())} &rarr;</a></p>'
+                  if cj else "")
+        cta = (f'<a class="btn-accent" href="/{cat}/">Browse {esc(cat_names[cat])}</a>' if cat else '<a class="btn-accent" href="/jobs/">View Jobs</a>')
+        write(path, f"""<article class="wrap article"><nav class="crumbs"><a href="/">Home</a> / <a href="/blog/">Blog</a> / {esc(p['title'])}</nav>
+<h1>{esc(p['title'])}</h1><p class="muted">Published {datetime.date.fromisoformat(p['date']).strftime('%B %d, %Y')} &middot; {BRAND}</p>{bodytxt}{AD_BOX}
+<div class="cta-box"><h2>Browse remote jobs hiring now</h2><p>{len(jobs):,} openings, updated daily.</p>{cta}</div>
+{latest}
+{f'<h2>Related Guides</h2><ul>{rel}</ul>' if rel else ''}</article>""", f"{p['title']} | {BRAND}", p["desc"],
               [{"@context": "https://schema.org", "@type": "Article", "headline": p["title"], "description": p["desc"],
-                "datePublished": p["date"], "dateModified": TODAY.isoformat(), "author": {"@type": "Organization", "name": BRAND},
+                "datePublished": p["date"], "dateModified": p["date"], "author": {"@type": "Organization", "name": BRAND},
                 "publisher": {"@type": "Organization", "name": BRAND}, "mainEntityOfPage": BASE + path},
                crumbs([("Home", "/"), ("Blog", "/blog/"), (p["title"], path)])])
         urls.append(path)
+        LASTMOD[path] = p["date"]
 
     # ---- static pages
     pages = {
