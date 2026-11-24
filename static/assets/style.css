@@ -122,3 +122,9 @@ h3{font-size:1.1rem;margin-bottom:.5rem}
 .pill .count{color:var(--muted);font-weight:500;font-size:.8rem;margin-left:.2rem}
 .hero-search.left{margin-left:0}
 .center .btn{margin-top:1.25rem;display:inline-block;text-decoration:none}
+.facts{background:#fff;border:2px solid var(--border);border-radius:var(--radius);padding:1.2rem 1.4rem;margin:1.2rem 0}
+.facts h2{font-size:1.15rem;margin:0 0 .8rem}
+.facts dl{display:grid;grid-template-columns:max-content 1fr;gap:.45rem 1.2rem;font-size:.95rem}
+.facts dt{color:var(--muted);font-weight:600}
+.facts dd{margin:0}
+@media(max-width:560px){.facts dl{grid-template-columns:1fr}.facts dt{margin-top:.4rem}}
