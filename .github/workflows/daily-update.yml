@@ -1,1 +1,13 @@
-
+name: Daily job update
+on:
+  schedule:
+    - cron: "17 2,14 * * *"
+  workflow_dispatch: {}
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Cloudflare Pages build
+        run: |
+          if [ -z "${{ secrets.CF_DEPLOY_HOOK }}" ]; then echo "Add the CF_DEPLOY_HOOK secret first"; exit 1; fi
+          curl -fsS -X POST "${{ secrets.CF_DEPLOY_HOOK }}"
