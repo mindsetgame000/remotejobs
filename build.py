@@ -520,13 +520,17 @@ def main():
             "comes from a public remote job board, and the Apply button takes you to the original listing",
             "comes from an employer's own career page, and the Apply button takes you to the employer's application page")
         bodytxt = autolink(bodytxt, phrases, self_url=path)
+        # one ad in the middle of the article (before the 3rd sub-heading), if the post is long enough
+        hs = [m.start() for m in re.finditer(r"<h2>", bodytxt)]
+        if len(hs) >= 3:
+            bodytxt = bodytxt[:hs[2]] + AD_BOX + bodytxt[hs[2]:]
         rel = "".join(f'<li><a href="/blog/{o["slug"]}/">{esc(o["title"])}</a></li>' for o in related_posts(p, POSTS))
         cat = p.get("cat")
         cj = [j for j in jobs if cat and cat in j["cats"]][:5]
         latest = (f'<h2>Latest {esc(cat_names[cat])}</h2>{job_list(cj)}<p><a href="/{cat}/">See all {esc(cat_names[cat].lower())} &rarr;</a></p>'
                   if cj else "")
         cta = (f'<a class="btn-accent" href="/{cat}/">Browse {esc(cat_names[cat])}</a>' if cat else '<a class="btn-accent" href="/jobs/">View Jobs</a>')
-        write(path, f"""<article class="wrap article"><nav class="crumbs"><a href="/">Home</a> / <a href="/blog/">Blog</a> / {esc(p['title'])}</nav>
+        write(path, f"""{AD_LEADER}<article class="wrap article"><nav class="crumbs"><a href="/">Home</a> / <a href="/blog/">Blog</a> / {esc(p['title'])}</nav>
 <h1>{esc(p['title'])}</h1><p class="muted">Published {datetime.date.fromisoformat(p['date']).strftime('%B %d, %Y')} &middot; {BRAND}</p>{bodytxt}{AD_BOX}
 <div class="cta-box"><h2>Browse remote jobs hiring now</h2><p>{len(jobs):,} openings, updated daily.</p>{cta}</div>
 {latest}
