@@ -197,6 +197,20 @@ def job_schema(j):
 
 
 # ------------------------------------------------------------------ layout
+# Histats visitor counter (shown on every page). Set to "" to turn it off.
+HISTATS = """<!-- Histats.com START (async)-->
+<script type="text/javascript">var _Hasync= _Hasync|| [];
+_Hasync.push(['Histats.start', '1,4740627,4,0,0,0,00010000']);
+_Hasync.push(['Histats.fasi', '1']);
+_Hasync.push(['Histats.track_hits', '']);
+(function() {
+var hs = document.createElement('script'); hs.type = 'text/javascript'; hs.async = true;
+hs.src = ('//s10.histats.com/js15_as.js');
+(document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(hs);
+})();</script>
+<noscript><a href="/" target="_blank"><img src="//sstatic1.histats.com/0.gif?4740627&101" alt="stats" border="0"></a></noscript>
+<!-- Histats.com END -->"""
+
 AD_LEADER = ('<div class="ad ad-wide"><iframe src="/ads/banner-728x90.html" width="728" height="90" loading="lazy" scrolling="no" title="Advertisement"></iframe></div>'
              '<div class="ad ad-narrow"><iframe src="/ads/banner-320x50.html" width="320" height="50" loading="lazy" scrolling="no" title="Advertisement"></iframe></div>')
 AD_BOX = '<div class="ad"><iframe src="/ads/banner-300x250.html" width="300" height="250" loading="lazy" scrolling="no" title="Advertisement"></iframe></div>'
@@ -247,6 +261,7 @@ def write(path, body, title, desc, schemas=(), robots="index, follow", canonical
 <main>{body}</main>
 {FOOT}
 <script src="/assets/app.js" defer></script><script src="/assets/ads.js" defer></script>
+{HISTATS}
 </body></html>"""
     if path.endswith(".html"):
         fp = os.path.join(OUT, path.lstrip("/"))
@@ -556,7 +571,7 @@ def main():
         "/about/": ("About Us", f"<p>{BRAND} helps people find real remote jobs without the noise. Every day we collect openings directly from employers' career pages, sort them into clear categories and send you to the employer's own page to apply.</p><p>We do not charge job seekers anything. If a job ever asks you for money, please do not pay and <a href=\"/contact/\">let us know</a>.</p>"),
         "/contact/": ("Contact Us", f'<p>Questions, feedback or a suspicious listing to report? Email <a href="mailto:{EMAIL}">{EMAIL}</a>.</p>'),
         "/post-a-job/": ("Post a Remote Job", f'<p>Hiring remotely? Send the job title, company, countries you hire from, salary range (if available) and your application link to <a href="mailto:{EMAIL}">{EMAIL}</a>. We review every listing before it goes live.</p>'),
-        "/privacy-policy/": ("Privacy Policy", f"<p>Last updated: {TODAY.strftime('%B %d, %Y')}</p><h2>What we collect</h2><p>We do not ask you to create an account. Our hosting provider (Cloudflare) may keep standard logs such as IP address and browser type for security and performance.</p><h2>Job listings</h2><p>Jobs come from employers' public career pages. When you continue to an application, you leave our site and that employer's privacy policy applies.</p><h2>Advertising</h2><p>We show ads from Adsterra. Adsterra and its partners may use cookies or similar technologies to show and measure ads. You can limit cookies in your browser settings.</p><h2>Contact</h2><p>Questions? Email <a href=\"mailto:{EMAIL}\">{EMAIL}</a>.</p>"),
+        "/privacy-policy/": ("Privacy Policy", f"<p>Last updated: {TODAY.strftime('%B %d, %Y')}</p><h2>What we collect</h2><p>We do not ask you to create an account. Our hosting provider (Cloudflare) may keep standard logs such as IP address and browser type for security and performance.</p><h2>Job listings</h2><p>Jobs come from employers' public career pages. When you continue to an application, you leave our site and that employer's privacy policy applies.</p><h2>Analytics</h2><p>We use Histats to count visits and see which pages are popular. Histats may set cookies to recognise returning visitors.</p><h2>Advertising</h2><p>We show ads from Adsterra. Adsterra and its partners may use cookies or similar technologies to show and measure ads. You can limit cookies in your browser settings.</p><h2>Contact</h2><p>Questions? Email <a href=\"mailto:{EMAIL}\">{EMAIL}</a>.</p>"),
     }
     for path, (t, b) in pages.items():
         write(path, f'<article class="wrap article"><h1>{t}</h1>{b}</article>', f"{t} | {BRAND}", f"{t} – {BRAND}.")
