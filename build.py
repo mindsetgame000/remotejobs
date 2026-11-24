@@ -509,7 +509,7 @@ def main():
     # ---- blog
     phrases = link_phrases()
     cards = "".join(f'<a class="card post-card" href="/blog/{p["slug"]}/"><h2>{esc(p["title"])}</h2><p>{esc(p["desc"])}</p><span class="more">Read more &rarr;</span></a>' for p in POSTS)
-    write("/blog/", f'<section class="hero hero-small"><div class="wrap"><nav class="crumbs"><a href="/">Home</a> / Blog</nav><h1>Remote Work Blog</h1><p class="lead">Honest, practical guides to help you find and land a remote job.</p></div></section><section class="wrap"><div class="grid">{cards}</div></section>',
+    write("/blog/", f'<section class="hero hero-small"><div class="wrap"><nav class="crumbs"><a href="/">Home</a> / Blog</nav><h1>Remote Work Blog</h1><p class="lead">Honest, practical guides to help you find and land a remote job.</p></div></section>{AD_LEADER}<section class="wrap"><div class="grid">{cards}</div></section>{AD_BOX}',
           f"Remote Work Blog – Job Search Guides | {BRAND}", "Practical guides for finding remote jobs: avoiding scams, writing a remote resume, and getting hired.",
           [crumbs([("Home", "/"), ("Blog", "/blog/")])])
     urls.append("/blog/")
