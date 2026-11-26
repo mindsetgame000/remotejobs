@@ -1,4 +1,5 @@
-"""Collects jobs from Greenhouse, Lever, Ashby, a Google Sheet (CSV) and jobs.json.
+"""Collects jobs from Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Recruitee,
+a Google Sheet (CSV) and jobs.json.
 
 Every job keeps the employer's real data: company name, location, job type and
 the employer's own application link. Fields the source does not provide are left
@@ -9,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
 
 UA = {"User-Agent": "RemoteJobsHub/1.0 (+job board importer)"}
+MAX_PER_COMPANY = 300  # keeps one very large employer from filling the whole site
 FIXTURES = os.environ.get("JOB_FIXTURES")  # folder with saved API replies, for offline testing
 
 COUNTRIES = """Afghanistan Albania Algeria Argentina Armenia Australia Austria Azerbaijan Bahrain Bangladesh
@@ -261,6 +263,108 @@ def from_ashby(org, display=None):
     return out
 
 
+# ---- Workable: apply.workable.com/<account>
+WORKABLE_TYPES = {"full-time": "FULL_TIME", "part-time": "PART_TIME", "contract": "CONTRACTOR",
+                  "temporary": "TEMPORARY", "internship": "INTERN", "other": ""}
+
+
+def _country(name="", code=""):
+    return country_name(name or "") or ISO2.get((code or "").upper()) or (name or "").strip()
+
+
+def from_workable(account, display=None):
+    data = get(f"https://apply.workable.com/api/v1/widget/accounts/{account}?details=true")
+    company = display or data.get("name") or account.replace("-", " ").title()
+    by = {}
+    for j in data.get("jobs", []):
+        if not j.get("telecommuting"):
+            continue
+        code = j.get("shortcode") or j.get("url")
+        locs = j.get("locations") or [{"country": j.get("country"), "countryCode": ""}]
+        cs = [c for c in (_country(l.get("country"), l.get("countryCode")) for l in locs) if c]
+        if code in by:  # Workable repeats a job once per location
+            by[code]["applicant_countries"] += [c for c in cs if c not in by[code]["applicant_countries"]]
+            continue
+        desc = (j.get("description") or "") + "".join(
+            f"<h3>{t}</h3>{j[k]}" for k, t in (("requirements", "Requirements"), ("benefits", "Benefits")) if j.get(k))
+        by[code] = {
+            "id": f"wk-{code}", "title": (j.get("title") or "").strip(), "company": company, "company_url": "",
+            "location_text": "Remote · " + ", ".join(cs) if cs else "Remote", "remote": True,
+            "applicant_countries": list(dict.fromkeys(cs)),
+            "employment_type": WORKABLE_TYPES.get((j.get("employment_type") or "").lower(), "") or type_from_text(j.get("title")),
+            "department": j.get("department") or j.get("function") or "",
+            "description": clean_html(desc), "apply_url": j.get("url") or j.get("application_url") or "",
+            "date_posted": iso_date(j.get("published_on") or j.get("created_at")), "source": "workable",
+        }
+    return list(by.values())
+
+
+# ---- SmartRecruiters: jobs.smartrecruiters.com/<company>
+def from_smartrecruiters(company, display=None):
+    items, offset = [], 0
+    while True:
+        d = get(f"https://api.smartrecruiters.com/v1/companies/{company}/postings?limit=100&offset={offset}")
+        items += d.get("content", [])
+        offset += 100
+        if offset >= d.get("totalFound", 0) or offset >= 1000:
+            break
+    types = {"full-time": "FULL_TIME", "part-time": "PART_TIME", "contract": "CONTRACTOR", "temporary": "TEMPORARY",
+             "internship": "INTERN", "intern": "INTERN"}
+    out = []
+    for p in [x for x in items if (x.get("location") or {}).get("remote")][:150]:
+        try:
+            det = get(p["ref"])
+        except Exception:  # noqa
+            det = {}
+        secs = (det.get("jobAd") or {}).get("sections") or {}
+        desc = "".join((f"<h3>{s['title']}</h3>" if s.get("title") else "") + (s.get("text") or "")
+                       for k in ("companyDescription", "jobDescription", "qualifications", "additionalInformation")
+                       for s in [secs.get(k) or {}] if s.get("text"))
+        loc = p.get("location") or {}
+        c = _country("", loc.get("country")) or ""
+        cs = [c] if c else countries_in(loc.get("fullLocation", ""))
+        out.append({
+            "id": f"sr-{p.get('id')}", "title": (p.get("name") or "").strip(),
+            "company": display or (p.get("company") or {}).get("name") or company, "company_url": "",
+            "location_text": loc.get("fullLocation") or "Remote", "remote": True, "applicant_countries": cs,
+            "employment_type": types.get(((p.get("typeOfEmployment") or {}).get("label") or "").lower(), "") or type_from_text(p.get("name")),
+            "department": (p.get("department") or {}).get("label") or (p.get("function") or {}).get("label") or "",
+            "description": clean_html(desc),
+            "apply_url": det.get("postingUrl") or det.get("applyUrl") or f"https://jobs.smartrecruiters.com/{company}/{p.get('id')}",
+            "date_posted": iso_date(p.get("releasedDate")), "source": "smartrecruiters",
+        })
+    return out
+
+
+# ---- Recruitee: <company>.recruitee.com
+def from_recruitee(company, display=None):
+    data = get(f"https://{company}.recruitee.com/api/offers/")
+    types = {"fulltime": "FULL_TIME", "parttime": "PART_TIME", "contract": "CONTRACTOR", "freelance": "CONTRACTOR",
+             "internship": "INTERN", "temporary": "TEMPORARY"}
+    out = []
+    for o in data.get("offers", []):
+        if not o.get("remote") and "remote" not in (o.get("location") or "").lower():
+            continue
+        c = _country(o.get("country"), o.get("country_code"))
+        sal = o.get("salary") or {}
+        unit = {"hour": "HOUR", "month": "MONTH", "year": "YEAR", "week": "WEEK", "day": "DAY"}.get((sal.get("period") or "").lower(), "")
+        out.append({
+            "id": f"rc-{o.get('id')}", "title": (o.get("title") or "").strip(),
+            "company": display or o.get("company_name") or company.replace("-", " ").title(), "company_url": "",
+            "location_text": o.get("location") or "Remote", "remote": True,
+            "applicant_countries": [c] if c else countries_in(o.get("location", "")),
+            "employment_type": types.get((o.get("employment_type_code") or "").lower().replace("_", ""), "") or type_from_text(o.get("title")),
+            "department": o.get("department") or "",
+            "description": clean_html((o.get("description") or "") + ("<h3>Requirements</h3>" + o["requirements"] if o.get("requirements") else "")),
+            "apply_url": o.get("careers_url") or o.get("careers_apply_url") or "",
+            "date_posted": iso_date(o.get("published_at") or o.get("created_at")),
+            "salary_min": sal.get("min") or "", "salary_max": sal.get("max") or "",
+            "salary_currency": sal.get("currency") or "", "salary_unit": unit if sal.get("min") or sal.get("max") else "",
+            "source": "recruitee",
+        })
+    return out
+
+
 def truthy(v):
     return str(v).strip().lower() in ("1", "yes", "y", "true", "remote")
 
@@ -337,6 +441,9 @@ def from_sheet(url):
     text = get(url, kind="text")
     rows = list(csv.DictReader(io.StringIO(text)))
     rows = [{(k or "").strip().lower(): (v or "").strip() for k, v in r.items()} for r in rows]
+    # Approval: if the sheet has an "approved" column, only rows marked yes/approved/1/true go live.
+    if rows and "approved" in rows[0]:
+        rows = [r for r in rows if r.get("approved", "").lower() in ("yes", "y", "1", "true", "approved", "ok", "✓", "✔")]
     return [normalize_manual(r, i, "sheet") for i, r in enumerate(rows) if r.get("title") and r.get("apply_url")]
 
 
@@ -355,6 +462,9 @@ def collect(companies_file="companies.json", jobs_file="jobs.json", sheet_url=""
     tasks = [(from_greenhouse, b) for b in cfg.get("greenhouse", [])]
     tasks += [(from_lever, c) for c in cfg.get("lever", [])]
     tasks += [(from_ashby, o) for o in cfg.get("ashby", [])]
+    tasks += [(from_workable, a) for a in cfg.get("workable", [])]
+    tasks += [(from_smartrecruiters, c) for c in cfg.get("smartrecruiters", [])]
+    tasks += [(from_recruitee, c) for c in cfg.get("recruitee", [])]
     jobs, report = [], []
 
     def run(t):
@@ -362,13 +472,14 @@ def collect(companies_file="companies.json", jobs_file="jobs.json", sheet_url=""
         name, display = split_name(entry)
         try:
             res = fn(name, display)
+            res = sorted(res, key=lambda j: j.get("date_posted") or "", reverse=True)[:MAX_PER_COMPANY]
             return name, fn.__name__[5:], res, None
         except Exception as e:  # noqa
             return name, fn.__name__[5:], [], e
 
     with ThreadPoolExecutor(max_workers=8) as ex:
         for name, src, res, err in ex.map(run, tasks):
-            report.append(f"  {src:10} {name:22} {'SKIPPED (' + type(err).__name__ + ')' if err else str(len(res)) + ' remote jobs'}")
+            report.append(f"  {src:10} {name:22} {'SKIPPED (' + type(err).__name__ + ': name not found or source offline)' if err else str(len(res)) + ' remote jobs'}")
             jobs += res
     if sheet_url:
         try:

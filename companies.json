@@ -6,14 +6,25 @@
     "webflow", "vercel", "gusto", "instacart", "lyft", "pinterest", "samsara", "grammarly",
     "mongodb", "okta", "asana", "affirm", "chime", "brex", "postman", "doximity",
     "toast", "zscaler", "hubspot", "databricks", "airtable", "carta", "flexport",
-    "planetscale", "sourcegraph", "mercury", "remote", "oyster", "hellofresh"
+    "planetscale", "sourcegraph", "mercury", "remote", "oyster", "hellofresh",
+    "greenhouse|Greenhouse", "talkspace|Talkspace", "talkspacetherapist|Talkspace", "talkspacepsychiatry|Talkspace",
+    "coursera|Coursera", "omadahealth|Omada Health"
   ],
   "lever": [
     "spotify", "palantir", "plaid", "netlify", "kraken", "binance", "veeva", "outreach",
-    "attentive", "whoop|WHOOP", "aircall", "toptal", "wealthsimple|Wealthsimple", "zoox|Zoox"
+    "attentive", "whoop|WHOOP", "aircall", "toptal", "wealthsimple|Wealthsimple", "zoox|Zoox",
+    "lwolf|Lone Wolf Technologies"
   ],
   "ashby": [
     "ramp", "notion", "linear", "openai|OpenAI", "deel", "vanta", "retool", "supabase",
-    "posthog|PostHog", "zapier", "replit", "cursor", "clickup|ClickUp", "1password|1Password"
-  ]
+    "posthog|PostHog", "zapier", "replit", "cursor", "clickup|ClickUp", "1password|1Password",
+    "classdojo|ClassDojo"
+  ],
+  "workable": [
+    "huggingface|Hugging Face", "crewbloom|CrewBloom", "pavago|Pavago"
+  ],
+  "smartrecruiters": [
+    "smartrecruiters|SmartRecruiters"
+  ],
+  "recruitee": []
 }
