@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
 
 UA = {"User-Agent": "RemoteJobsHub/1.0 (+job board importer)"}
-MAX_PER_COMPANY = 300  # keeps one very large employer from filling the whole site
+MAX_PER_COMPANY = 150  # keeps one very large employer from filling the whole site
 FIXTURES = os.environ.get("JOB_FIXTURES")  # folder with saved API replies, for offline testing
 
 COUNTRIES = """Afghanistan Albania Algeria Argentina Armenia Australia Austria Azerbaijan Bahrain Bangladesh
