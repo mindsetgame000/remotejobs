@@ -285,7 +285,7 @@ def nav():
     return f"""<header class="topbar"><div class="wrap topbar-in">
 <a href="/" class="logo">{BRAND}</a>
 <input type="checkbox" id="navToggle" class="nav-toggle" aria-hidden="true"><label for="navToggle" class="nav-btn" aria-label="Open menu"><span></span><span></span><span></span></label>
-<nav class="menu" aria-label="Main"><a href="/jobs/">Jobs</a><a href="/#categories">Categories</a><a href="/tools/">Tools</a><a href="/blog/">Blog</a><a href="/post-a-job/" class="btn-accent">Post a Job</a></nav>
+<nav class="menu" aria-label="Main"><a href="/jobs/">Jobs</a><a href="/#categories">Categories</a><a href="/companies/">Companies</a><a href="/tools/">Tools</a><a href="/blog/">Blog</a><a href="/post-a-job/" class="btn-accent">Post a Job</a></nav>
 </div></header>"""
 
 
@@ -330,7 +330,7 @@ def write(path, body, title, desc, schemas=(), robots="index, follow", canonical
 {NAV}
 <main>{body}</main>
 {FOOT}
-<script src="/assets/app.js" defer></script>{'<script src="/assets/ads.js" defer></script>' if ADSTERRA_ON else ''}
+<script src="/assets/app.js" defer></script><script src="/assets/local.js" defer></script>{'<script src="/assets/ads.js" defer></script>' if ADSTERRA_ON else ''}
 {HISTATS}
 </body></html>"""
     if path.endswith(".html"):
@@ -389,7 +389,9 @@ def card(j):
         tags += f'<span class="tag">{TYPE_LABEL[j["employment_type"]]}</span>'
     if salary_label(j):
         tags += f'<span class="tag">{esc(salary_label(j))}</span>'
-    return (f'<a class="job" href="/job/{j["slug"]}/"><span class="ph">{esc(j["company"][:1].upper() or "?")}</span>'
+    if j.get("beginner"):
+        tags += '<span class="tag gold">Beginner friendly</span>'
+    return (f'<a class="job" href="/job/{j["slug"]}/"{growth.data_attrs(j) if growth.b else ""}><span class="ph">{esc(j["company"][:1].upper() or "?")}</span>'
             f'<div class="job-main"><div class="job-title">{esc(j["title"])}</div><div class="job-co">{esc(j["company"])}</div>'
             f'<div class="tags">{tags}</div></div><div class="job-side">{ago(j["date_posted"])}<br><span class="apply">View job &rarr;</span></div></a>')
 
@@ -538,6 +540,7 @@ def main():
 <div class="tags">{tags}</div>
 <p class="lead-small">{job_summary(j, cat_counts)}</p>
 <div class="apply-top"><a class="btn-accent" href="{apply_href}" rel="nofollow">Apply for this job</a></div>
+{growth.source_line(j)}
 <section class="facts"><h2>Job details</h2><dl>
 <dt>Company</dt><dd>{esc(j['company'])}</dd>
 <dt>Location</dt><dd>{esc(location_label(j))}</dd>
@@ -545,7 +548,8 @@ def main():
 {f"<dt>Salary</dt><dd>{esc(salary_label(j))}</dd>" if salary_label(j) else ''}
 <dt>Posted</dt><dd>{datetime.date.fromisoformat(j["date_posted"]).strftime("%B %d, %Y")}</dd>
 <dt>Apply by</dt><dd>{datetime.date.fromisoformat(j["valid_through"]).strftime("%B %d, %Y")}</dd>
-<dt>How to apply</dt><dd>On {esc(j['company'])}'s own application page</dd></dl></section>
+<dt>How to apply</dt><dd>On {esc(j['company'])}'s own application page</dd>
+{growth.job_extra_rows(j)}</dl></section>
 <div class="job-desc">{j['description'] or '<p>See the full description on the employer&#39;s application page.</p>'}</div>
 {AD_BOX}
 <div class="cta-box"><h2>Interested?</h2><p>You will apply on {esc(j['company'])}'s own application page.</p>
@@ -620,7 +624,8 @@ def main():
     home = f"""<section class="hero"><div class="wrap">
 <p class="badge"><span class="dot"></span> {len(jobs):,} remote jobs &middot; updated daily</p>
 <h1>Remote Jobs Hiring Now</h1>
-<p class="lead">Real work-from-home jobs from company career pages: customer service, software, data, marketing, sales, design and more.</p>
+<p class="lead">Real work-from-home jobs from company career pages: customer service, software, data, marketing, sales, design and more. See which jobs are open to your country, your local working hours and pay in your currency.</p>
+<p class="free-note">100% free &middot; No sign-up &middot; No paywall</p>
 <form class="hero-search" action="/search/" method="get" role="search"><input type="search" name="q" placeholder="Job title, skill or company" aria-label="Search remote jobs"><button type="submit">Search Jobs</button></form>
 </div></section>
 <section class="wrap" id="categories"><h2>Browse Remote Jobs by Category</h2><div class="pills">{pills}</div></section>
@@ -700,6 +705,7 @@ def main():
         urls.append(path)
     # ---- collections, countries, report, tools, pay pages
     urls += growth.build_all()
+    urls += growth.build_round2()
 
     write("/404.html", '<article class="wrap article"><h1>Page not found</h1><p>This job may have closed. <a href="/jobs/">See current remote jobs</a>.</p></article>',
           f"Page Not Found | {BRAND}", "Page not found.", robots="noindex", canonical=False)

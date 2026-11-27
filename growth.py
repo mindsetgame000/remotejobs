@@ -133,6 +133,7 @@ def prepare(build_module, jobs):
         for c, n in cnt.items():
             if n >= MIN_COUNTRY_CAT and c in COUNTRY_PAGES:
                 CC_PAGES[(slug, c)] = f"/{slug}-{b.slugify(c)}/"
+    prepare2(jobs)
 
 
 def collections_list(min_jobs=3):
@@ -155,6 +156,8 @@ def link_phrases():
         out += [(f"remote jobs in {the(c)}".lower(), path), (f"remote jobs {c}".lower(), path)]
     for t in TOOLS:
         out += [(p, tool_path(t)) for p in t["phrases"]]
+    for s_, (n, p, _) in SKILL_PAGES.items():
+        out.append((f"remote {n.lower()} jobs", p))
     return out
 
 
@@ -196,7 +199,10 @@ def job_links(j):
 def home_html():
     pop = collections_list() + [(f"Remote Jobs in {the(c)}", p) for c, (p, _) in top_countries(8)]
     tools = "".join(f'<a class="card post-card" href="{tool_path(t)}"><h3>{esc(t["name"])}</h3><p>{esc(t["intro"][:120])}…</p><span class="more">Open tool &rarr;</span></a>' for t in TOOLS)
-    return (f'<section class="wrap"><h2>Popular Remote Job Searches</h2>{pills(pop)}</section>'
+    top_cos = sorted(COMPANY_PAGES.items(), key=lambda kv: -sum(1 for j in JOBS if j["company"] == kv[0]))[:16]
+    extra = (f'<section class="wrap"><h2>Top Companies Hiring Remotely</h2>{pills([(n, p) for n, p in top_cos] + [("All companies", "/companies/")])}</section>' if top_cos else "")
+    extra += (f'<section class="wrap"><h2>Remote Jobs by Skill</h2>{pills([(n, p) for n, p, _ in SKILL_PAGES.values()])}</section>' if SKILL_PAGES else "")
+    return (extra + f'<section class="wrap"><h2>Popular Remote Job Searches</h2>{pills(pop)}</section>'
             f'<section class="wrap"><h2>Free Job Search Tools</h2><div class="grid">{tools}</div>'
             f'<p class="muted">Plus our <a href="/remote-jobs-report/">monthly remote jobs report</a> with salaries and top hiring companies.</p></section>')
 
@@ -205,7 +211,7 @@ def footer_columns():
     pop = "".join(f'<li><a href="{u}">{esc(n)}</a></li>' for n, u in collections_list()[:6])
     pop += "".join(f'<li><a href="{p}">Remote Jobs in {esc(the(c))}</a></li>' for c, (p, _) in top_countries(4))
     tools = "".join(f'<li><a href="{tool_path(t)}">{esc(t["name"])}</a></li>' for t in TOOLS)
-    tools += '<li><a href="/remote-jobs-report/">Remote Jobs Report</a></li>'
+    tools += '<li><a href="/remote-jobs-report/">Remote Jobs Report</a></li><li><a href="/companies/">Companies Hiring</a></li>'
     return f'<div><h3>Popular Searches</h3><ul>{pop}</ul></div><div><h3>Free Tools</h3><ul>{tools}</ul></div>'
 
 
@@ -476,4 +482,254 @@ def build_pay_pages():
                      {"@type": "Question", "name": q, "acceptedAnswer": {"@type": "Answer", "text": a}} for q, a in faq]}])
         urls.append(path)
         b.LASTMOD[path] = b.TODAY.replace(day=1).isoformat()
+    return urls
+
+
+# ================================================================== round 2: features big boards lack
+import json as _json
+import urllib.request as _ur
+
+COMPANY_PAGES = {}   # company name -> path
+SKILL_PAGES = {}     # skill slug -> (name, path, count)
+MIN_COMPANY = 3
+MIN_SKILL = 5
+BUILD_TIME = datetime.datetime.utcnow().replace(microsecond=0)
+
+SKILLS = [
+    ("excel", "Excel", r"\bexcel\b|spreadsheet"), ("zendesk", "Zendesk", r"zendesk"),
+    ("salesforce", "Salesforce", r"salesforce"), ("hubspot", "HubSpot", r"hubspot"),
+    ("quickbooks", "QuickBooks", r"quickbooks"), ("shopify", "Shopify", r"shopify"),
+    ("google-ads", "Google Ads", r"google ads|adwords|\bppc\b"), ("seo", "SEO", r"\bseo\b"),
+    ("figma", "Figma", r"figma"), ("canva", "Canva", r"\bcanva\b"),
+    ("python", "Python", r"\bpython\b"), ("javascript", "JavaScript", r"javascript|typescript|node\.?js"),
+    ("react", "React", r"\breact\b"), ("sql", "SQL", r"\bsql\b"), ("aws", "AWS", r"\baws\b|amazon web services"),
+    ("wordpress", "WordPress", r"wordpress"), ("jira", "Jira", r"\bjira\b"),
+    ("spanish-speaking", "Spanish Speaking", r"spanish|bilingual \(?spanish|español"),
+    ("french-speaking", "French Speaking", r"\bfrench[- ]speaking|fluent (in )?french|bilingual french"),
+    ("german-speaking", "German Speaking", r"\bgerman[- ]speaking|fluent (in )?german|\(german\)|- german\b"),
+    ("portuguese-speaking", "Portuguese Speaking", r"portuguese"),
+    ("social-media", "Social Media", r"social media|instagram|tiktok"),
+    ("video-editing", "Video Editing", r"video edit|premiere pro|after effects"),
+    ("bookkeeping", "Bookkeeping", r"bookkeep"),
+]
+
+TZ_RULES = [
+    (r"\b(est|edt|eastern time|eastern standard|us eastern|et time zone)\b", "America/New_York", "US Eastern"),
+    (r"\b(pst|pdt|pacific time|pacific standard|us pacific)\b", "America/Los_Angeles", "US Pacific"),
+    (r"\b(cst|cdt|central time|us central)\b", "America/Chicago", "US Central"),
+    (r"\b(mst|mdt|mountain time)\b", "America/Denver", "US Mountain"),
+    (r"\b(aest|aedt|sydney time|australian eastern)\b", "Australia/Sydney", "Australian Eastern"),
+    (r"\b(cet|cest|central european)\b", "Europe/Berlin", "Central European"),
+    (r"\b(gmt|bst|uk hours|uk time)\b", "Europe/London", "UK"),
+]
+
+
+def _tz_for(j):
+    txt = (j["title"] + " " + (j.get("location_text") or "") + " " + j["_text"][:4000]).lower()
+    for rx, tz, label in TZ_RULES:
+        if re.search(rx, txt):
+            return tz, label, True
+    cs = set(j.get("applicant_countries") or [])
+    if cs and cs <= {"United States"}:
+        return "America/New_York", "US Eastern", False
+    if cs and cs <= {"United Kingdom"}:
+        return "Europe/London", "UK", False
+    return "", "", False
+
+
+def is_beginner(j):
+    return bool(COLLECTIONS[0][3](j) or COLLECTIONS[6][3](j))  # entry level or no degree
+
+
+def company_slug(name):
+    return b.slugify(name)
+
+
+def prepare2(jobs):
+    """Called from prepare(): flags used by cards, job pages and local.js."""
+    cc = Counter(j["company"] for j in jobs)
+    for name, n in cc.items():
+        if n >= MIN_COMPANY:
+            COMPANY_PAGES[name] = f"/companies/{company_slug(name)}/"
+    for slug, name, rx in SKILLS:
+        r = re.compile(rx, re.I)
+        n = sum(1 for j in jobs if r.search(j["title"] + " " + j["_text"][:6000]))
+        if n >= MIN_SKILL:
+            SKILL_PAGES[slug] = (name, f"/remote-{slug}-jobs/", n)
+    for j in jobs:
+        j["beginner"] = is_beginner(j)
+        j["tz"], j["tz_label"], j["tz_exact"] = _tz_for(j)
+
+
+def data_attrs(j):
+    """Attributes local.js reads to show 'open to your country', local hours and local pay."""
+    cs = "|".join(j.get("applicant_countries") or [])
+    a = j.get("_annual") or ""
+    return (f' data-c="{esc(cs)}"' + (' data-ww="1"' if j.get("worldwide") else "") +
+            (f' data-pay="{int(a)}"' if a else ""))
+
+
+def job_extra_rows(j):
+    """Extra rows for the Job details box (filled in by local.js in the visitor's browser)."""
+    rows = '<dt>Can I apply from my country?</dt><dd class="elig" data-c="{}"{}>{}</dd>'.format(
+        esc("|".join(j.get("applicant_countries") or [])), ' data-ww="1"' if j.get("worldwide") else "",
+        "Open worldwide" if j.get("worldwide") else esc(", ".join(j.get("applicant_countries") or []) or "Not stated by the employer"))
+    if j.get("tz"):
+        rows += (f'<dt>Working hours in your time</dt><dd class="localhours" data-tz="{j["tz"]}" data-exact="{1 if j["tz_exact"] else 0}" '
+                 f'data-label="{esc(j["tz_label"])}">9 AM – 5 PM {esc(j["tz_label"])} time{"" if j["tz_exact"] else " (estimated)"}</dd>')
+    if j.get("_annual"):
+        rows += f'<dt>Pay in your currency</dt><dd class="localpay" data-pay="{int(j["_annual"])}">About {money(j["_annual"])} a year</dd>'
+    if j.get("beginner"):
+        rows += '<dt>Good for beginners?</dt><dd>Yes: the listing mentions entry-level, training or no degree needed</dd>'
+    return rows
+
+
+def source_line(j):
+    host = re.sub(r"^https?://([^/]+).*$", r"\1", j.get("apply_url") or "")
+    co = COMPANY_PAGES.get(j["company"])
+    co_link = f' &middot; <a href="{co}">All {esc(j["company"])} remote jobs</a>' if co else ""
+    return (f'<p class="source-line">✔ Source: {esc(j["company"])}&#39;s own job board ({esc(host)}) &middot; '
+            f'<span class="checked" data-t="{BUILD_TIME.isoformat()}Z">Checked {BUILD_TIME.strftime("%b %d, %H:%M")} UTC</span>{co_link}</p>')
+
+
+def fetch_fx():
+    """Exchange rates for 'pay in your currency'. If the rate service is down, the feature just hides itself."""
+    try:
+        with _ur.urlopen("https://open.er-api.com/v6/latest/USD", timeout=12) as r:
+            d = _json.loads(r.read().decode())
+        if d.get("result") == "success":
+            return {k: v for k, v in d["rates"].items()}
+    except Exception:  # noqa
+        pass
+    return {}
+
+
+def build_companies():
+    urls = []
+    names = cat_names()
+    rows = ""
+    for name, path in sorted(COMPANY_PAGES.items(), key=lambda kv: kv[0].lower()):
+        cj = [j for j in JOBS if j["company"] == name]
+        cats = Counter(c for j in cj for c in j["cats"]).most_common(3)
+        ctr = Counter(c for j in cj for c in (j.get("applicant_countries") or [])).most_common(6)
+        pays = sorted(j["_annual"] for j in cj if j.get("_annual"))
+        beg = sum(1 for j in cj if j.get("beginner"))
+        ww = sum(1 for j in cj if j.get("worldwide"))
+        hosts = Counter(re.sub(r"^https?://([^/]+).*$", r"\1", j.get("apply_url") or "") for j in cj).most_common(1)
+        facts = [f"<dt>Open remote jobs</dt><dd>{len(cj):,}</dd>"]
+        if cats:
+            facts.append("<dt>Hires most for</dt><dd>" + ", ".join(f'<a href="/{c}/">{esc(names[c])}</a>' for c, _ in cats) + "</dd>")
+        if ctr:
+            facts.append("<dt>Hires people in</dt><dd>" + ", ".join(
+                (f'<a href="{COUNTRY_PAGES[c][0]}">{esc(c)}</a>' if c in COUNTRY_PAGES else esc(c)) for c, _ in ctr) +
+                (" and more" if len(set(c for j in cj for c in (j.get("applicant_countries") or []))) > 6 else "") + "</dd>")
+        if ww:
+            facts.append(f"<dt>Work-from-anywhere jobs</dt><dd>{ww}</dd>")
+        if len(pays) >= 2:
+            facts.append(f"<dt>Published pay range</dt><dd>{money(pays[0])} – {money(pays[-1])} a year ({len(pays)} jobs list pay)</dd>")
+        if beg:
+            facts.append(f"<dt>Beginner-friendly jobs</dt><dd>{beg}</dd>")
+        if hosts and hosts[0][0]:
+            facts.append(f"<dt>Applications go to</dt><dd>{esc(hosts[0][0])} (the company's own job board)</dd>")
+        newest = max(j["date_posted"] for j in cj)
+        intro = (f'<p class="lead">{esc(name)} has {len(cj):,} open remote job{"s" if len(cj) != 1 else ""} right now. '
+                 f'The newest was posted on {datetime.date.fromisoformat(newest).strftime("%B %d, %Y")}. Every job below links to '
+                 f'{esc(name)}&#39;s own application page.</p><section class="facts"><h2>{esc(name)} at a glance</h2><dl>{"".join(facts)}</dl></section>')
+        urls += b.paged(path, cj, f"{name} Remote Jobs",
+                        f"{len(cj):,} remote jobs at {name}: countries they hire from, pay ranges and direct application links. Updated daily.",
+                        intro, f"{name} Remote Jobs",
+                        '<section class="wrap"><h2>More companies hiring remotely</h2>' + pills(
+                            [(n, p) for n, p in sorted(COMPANY_PAGES.items(), key=lambda kv: -sum(1 for j in JOBS if j["company"] == kv[0]))
+                             if n != name][:24] + [("All companies", "/companies/")]) + "</section>")
+        rows += f'<tr><td><a href="{path}">{esc(name)}</a></td><td>{len(cj)}</td><td>{esc(", ".join(names[c] for c, _ in cats[:2]))}</td><td>{ww or "–"}</td></tr>'
+    if COMPANY_PAGES:
+        b.write("/companies/", f"""<section class="hero hero-small"><div class="wrap"><nav class="crumbs"><a href="/">Home</a> / Companies</nav>
+<h1>Companies Hiring Remotely</h1><p class="lead">{len(COMPANY_PAGES)} companies with open remote jobs right now, taken from their own career pages. Pick a company to see every open role, the countries it hires from and its published pay.</p></div></section>
+{b.AD_LEADER}<section class="wrap"><div class="table-wrap"><table class="data-table"><thead><tr><th>Company</th><th>Open jobs</th><th>Hires most for</th><th>Work from anywhere</th></tr></thead><tbody>{rows}</tbody></table></div></section>{b.AD_BOX}""",
+                f"Companies Hiring Remotely Right Now ({b.TODAY.strftime('%b %Y')}) | {b.BRAND}",
+                f"{len(COMPANY_PAGES)} companies with open remote jobs: see who is hiring, for which roles and from which countries.",
+                [b.crumbs([("Home", "/"), ("Companies", "/companies/")])])
+        b.LASTMOD["/companies/"] = b.TODAY.isoformat()
+        urls.append("/companies/")
+    return urls
+
+
+def build_skills():
+    urls = []
+    for slug, name, rx in SKILLS:
+        if slug not in SKILL_PAGES:
+            continue
+        r = re.compile(rx, re.I)
+        sj = [j for j in JOBS if r.search(j["title"] + " " + j["_text"][:6000])]
+        cos = Counter(j["company"] for j in sj).most_common(5)
+        cats = Counter(c for j in sj for c in j["cats"]).most_common(4)
+        names = cat_names()
+        title = f"Remote {name} Jobs"
+        intro = (f'<p class="lead">{len(sj):,} remote jobs that mention {esc(name)}, from employers such as {esc(", ".join(c for c, _ in cos))}. '
+                 + ("Most are in " + ", ".join(f'<a href="/{c}/">{esc(names[c].lower())}</a>' for c, _ in cats) + ". " if cats else "")
+                 + f'Showing {esc(name)} on your resume, with a real example of how you used it, helps you stand out for these roles.</p>')
+        others = pills([(n, p) for s, (n, p, _) in SKILL_PAGES.items() if s != slug][:20])
+        urls += b.paged(f"/remote-{slug}-jobs/", sj, title,
+                        f"{len(sj):,} remote jobs that need {name}. Real openings from company career pages, updated daily.",
+                        intro, title, f'<section class="wrap"><h2>Browse by skill</h2>{others}</section>')
+    return urls
+
+
+LOCAL_JS = r"""(function(){
+var TZC={'Asia/Dhaka':'Bangladesh','Asia/Manila':'Philippines','Asia/Kolkata':'India','Asia/Calcutta':'India','Asia/Karachi':'Pakistan','Africa/Lagos':'Nigeria','Africa/Nairobi':'Kenya','Africa/Johannesburg':'South Africa','Africa/Cairo':'Egypt','Africa/Accra':'Ghana','Africa/Casablanca':'Morocco','Asia/Jakarta':'Indonesia','Asia/Kuala_Lumpur':'Malaysia','Asia/Ho_Chi_Minh':'Vietnam','Asia/Saigon':'Vietnam','Asia/Bangkok':'Thailand','Asia/Singapore':'Singapore','Asia/Colombo':'Sri Lanka','Asia/Kathmandu':'Nepal','Asia/Dubai':'United Arab Emirates','Asia/Riyadh':'Saudi Arabia','Asia/Tokyo':'Japan','Asia/Seoul':'South Korea','Asia/Taipei':'Taiwan','Asia/Jerusalem':'Israel','Europe/Istanbul':'Turkey','Europe/London':'United Kingdom','Europe/Dublin':'Ireland','Europe/Berlin':'Germany','Europe/Paris':'France','Europe/Madrid':'Spain','Europe/Rome':'Italy','Europe/Amsterdam':'Netherlands','Europe/Warsaw':'Poland','Europe/Lisbon':'Portugal','Europe/Bucharest':'Romania','Europe/Kiev':'Ukraine','Europe/Kyiv':'Ukraine','Europe/Stockholm':'Sweden','Europe/Athens':'Greece','America/New_York':'United States','America/Chicago':'United States','America/Denver':'United States','America/Phoenix':'United States','America/Los_Angeles':'United States','America/Anchorage':'United States','Pacific/Honolulu':'United States','America/Detroit':'United States','America/Toronto':'Canada','America/Vancouver':'Canada','America/Edmonton':'Canada','America/Winnipeg':'Canada','America/Halifax':'Canada','America/Mexico_City':'Mexico','America/Bogota':'Colombia','America/Lima':'Peru','America/Sao_Paulo':'Brazil','America/Argentina/Buenos_Aires':'Argentina','America/Buenos_Aires':'Argentina','America/Santiago':'Chile','America/Costa_Rica':'Costa Rica','America/Santo_Domingo':'Dominican Republic','America/Jamaica':'Jamaica','America/Guatemala':'Guatemala','America/Montevideo':'Uruguay','Australia/Sydney':'Australia','Australia/Melbourne':'Australia','Australia/Brisbane':'Australia','Australia/Perth':'Australia','Pacific/Auckland':'New Zealand'};
+var CUR={'Bangladesh':['BDT','৳'],'Philippines':['PHP','₱'],'India':['INR','₹'],'Pakistan':['PKR','Rs '],'Nigeria':['NGN','₦'],'Kenya':['KES','KSh '],'South Africa':['ZAR','R'],'Egypt':['EGP','E£'],'Ghana':['GHS','GH₵'],'Indonesia':['IDR','Rp '],'Malaysia':['MYR','RM '],'Vietnam':['VND','₫'],'Thailand':['THB','฿'],'Sri Lanka':['LKR','Rs '],'Nepal':['NPR','Rs '],'Brazil':['BRL','R$'],'Mexico':['MXN','MX$'],'Colombia':['COP','COL$'],'Argentina':['ARS','AR$'],'Peru':['PEN','S/ '],'Chile':['CLP','CLP$'],'United Kingdom':['GBP','£'],'Germany':['EUR','€'],'France':['EUR','€'],'Spain':['EUR','€'],'Italy':['EUR','€'],'Netherlands':['EUR','€'],'Ireland':['EUR','€'],'Portugal':['EUR','€'],'Poland':['PLN','zł '],'Romania':['RON','lei '],'Turkey':['TRY','₺'],'Ukraine':['UAH','₴'],'Canada':['CAD','CA$'],'Australia':['AUD','A$'],'New Zealand':['NZD','NZ$'],'Japan':['JPY','¥'],'Singapore':['SGD','S$'],'United Arab Emirates':['AED','AED '],'Saudi Arabia':['SAR','SAR '],'Morocco':['MAD','MAD ']};
+var store={get:function(){try{return localStorage.getItem('rjCountry');}catch(e){return null;}},set:function(v){try{localStorage.setItem('rjCountry',v);}catch(e){}}};
+var myTz='';try{myTz=Intl.DateTimeFormat().resolvedOptions().timeZone||'';}catch(e){}
+var me=store.get()||TZC[myTz]||'';
+var fx=null;
+function inList(el){var c=(el.getAttribute('data-c')||'').split('|').filter(Boolean);return{ww:el.getAttribute('data-ww')==='1',list:c,ok:el.getAttribute('data-ww')==='1'||c.indexOf(me)>=0};}
+function badges(){document.querySelectorAll('a.job[data-c]').forEach(function(a){var old=a.querySelector('.tag.elig-b');if(old)old.remove();if(!me)return;var r=inList(a),t=a.querySelector('.tags');if(!t)return;
+ var s=document.createElement('span');if(r.ww){s.className='tag elig-b ok';s.textContent='✓ Open worldwide';}else if(!r.list.length){return;}else if(r.ok){s.className='tag elig-b ok';s.textContent='✓ Open to '+me;}else{s.className='tag elig-b no';s.textContent='Not open to '+me;}
+ t.insertBefore(s,t.firstChild);});}
+function bar(){var lists=document.querySelectorAll('.job-list');if(!lists.length)return;var first=lists[0];var cards=document.querySelectorAll('a.job[data-c]');if(!cards.length)return;
+ var b=document.getElementById('ctryBar');if(!b){b=document.createElement('div');b.id='ctryBar';b.className='ctry-bar';first.parentNode.insertBefore(b,first);}
+ var opts=Object.keys(CUR).concat(['United States']).filter(function(v,i,a){return a.indexOf(v)===i;}).sort();
+ if(me&&opts.indexOf(me)<0)opts.unshift(me);
+ var n=0;cards.forEach(function(a){if(inList(a).ok)n++;});
+ b.innerHTML='<label>Your country: <select id="ctrySel"><option value="">Choose…</option>'+opts.map(function(o){return '<option'+(o===me?' selected':'')+'>'+o+'</option>';}).join('')+'</select></label>'+
+ (me?'<span><b>'+n+'</b> of '+cards.length+' jobs on this page are open to '+me+'</span><label class="only"><input type="checkbox" id="ctryOnly"> Show only these</label>':'<span>Pick your country to see which jobs you can apply for.</span>');
+ document.getElementById('ctrySel').onchange=function(){me=this.value;store.set(me);run();};
+ var o=document.getElementById('ctryOnly');if(o)o.onchange=function(){var on=this.checked;cards.forEach(function(a){a.style.display=(on&&!inList(a).ok)?'none':'';});};}
+function offset(tz){var d=new Date();var a=new Date(d.toLocaleString('en-US',{timeZone:tz}));var u=new Date(d.toLocaleString('en-US',{timeZone:'UTC'}));return (a-u)/3600000;}
+function fmt(h){h=((h%24)+24)%24;var hh=Math.floor(h),mm=Math.round((h-hh)*60);if(mm===60){hh=(hh+1)%24;mm=0;}return (hh%12||12)+(mm?':'+(mm<10?'0':'')+mm:'')+' '+(hh>=12?'PM':'AM');}
+function hours(){document.querySelectorAll('.localhours').forEach(function(el){var tz=el.getAttribute('data-tz');if(!tz||!myTz)return;var d;try{d=offset(myTz)-offset(tz);}catch(e){return;}
+ var s=9+d,e=17+d,night=(((s%24)+24)%24)>=18||(((s%24)+24)%24)<5;
+ el.innerHTML=fmt(s)+' – '+fmt(e)+' your time'+(night?' <b>(night shift for you)</b>':'')+'<br><small>Based on 9 AM – 5 PM '+el.getAttribute('data-label')+' time'+(el.getAttribute('data-exact')==='1'?'':' (estimated: the listing does not state hours)')+'</small>';});}
+function pay(){if(!fx||!me||!CUR[me])return;var c=CUR[me],r=fx[c[0]];if(!r)return;document.querySelectorAll('.localpay').forEach(function(el){var y=+el.getAttribute('data-pay')*r;
+ el.innerHTML='About '+c[1]+Math.round(y/12).toLocaleString()+' a month ('+c[1]+Math.round(y).toLocaleString()+' a year) if full-time, before tax<br><small>Converted from US dollars at today\'s rate</small>';});}
+function elig(){document.querySelectorAll('dd.elig').forEach(function(el){if(!me)return;var r=inList(el);if(r.ww){el.innerHTML='<b class="ok">✓ Yes, open worldwide</b>';}else if(!r.list.length){return;}else if(r.ok){el.innerHTML='<b class="ok">✓ Yes, open to '+me+'</b><br><small>Hires in: '+r.list.join(', ')+'</small>';}else{el.innerHTML='<b class="no">✗ Not open to '+me+'</b><br><small>Hires in: '+r.list.join(', ')+'</small>';}});}
+function checked(){document.querySelectorAll('.checked[data-t]').forEach(function(el){var t=new Date(el.getAttribute('data-t'));var h=Math.round((Date.now()-t)/3600000);if(h>=0&&h<200)el.textContent='Checked '+(h<1?'less than an hour':h+' hour'+(h===1?'':'s'))+' ago';});}
+function run(){badges();bar();elig();hours();pay();checked();}
+run();
+fetch('/data/fx.json').then(function(r){return r.ok?r.json():null;}).then(function(d){fx=d;pay();}).catch(function(){});
+})();"""
+
+LOCAL_CSS = """
+.tag.elig-b.ok{background:#dcfce7;color:#166534}.tag.elig-b.no{background:#fee2e2;color:#991b1b}
+.ctry-bar{display:flex;flex-wrap:wrap;gap:.6rem 1.2rem;align-items:center;background:#fff;border:2px solid var(--border);border-radius:var(--radius);padding:.8rem 1rem;margin:0 0 1rem;font-size:.95rem}
+.ctry-bar select{padding:.35rem .5rem;border:2px solid var(--border);border-radius:8px;font:inherit}
+.ctry-bar .only{display:flex;gap:.35rem;align-items:center;cursor:pointer}
+b.ok{color:#166534}b.no{color:#991b1b}
+.source-line{font-size:.9rem;color:var(--muted);background:#f6f7fb;border-radius:10px;padding:.6rem .9rem;margin:.8rem 0}
+.free-note{font-weight:600;color:var(--primary);margin-top:.6rem}
+"""
+
+
+def build_round2():
+    import os
+    urls = build_companies() + build_skills()
+    os.makedirs(os.path.join(b.OUT, "data"), exist_ok=True)
+    fx = fetch_fx()
+    with open(os.path.join(b.OUT, "data", "fx.json"), "w") as f:
+        _json.dump(fx, f)
+    with open(os.path.join(b.OUT, "assets", "local.js"), "w") as f:
+        f.write(LOCAL_JS)
+    with open(os.path.join(b.OUT, "assets", "extra.css"), "a") as f:
+        f.write(LOCAL_CSS)
+    print(f"Companies: {len(COMPANY_PAGES)} pages, skills: {len(SKILL_PAGES)} pages, fx rates: {len(fx)}")
     return urls
